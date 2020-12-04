@@ -28,7 +28,8 @@
 */
 
 
-int rx_lon;
+#define MAX_LINEA 80
+char linea[MAX_LINEA + 1];
 
 void setup()
 {
@@ -41,9 +42,6 @@ void setup()
 
 
 // automata receptor del mensaje GPS
-
-#define MAX_LINEA 80
-unsigned char linea[MAX_LINEA + 1];
 
 void cambia_led()
 {
@@ -74,7 +72,7 @@ int16_t buscar_velocidad (char *pl)
 	if (*pl++ != 'G' || *pl++ != 'P' || *pl++ != 'V' || *pl++ != 'T' || *pl++ != 'G')
 		return -1;
 
-	Serial.println(pl);
+//	Serial.println(pl);
 
 	// se han de saltar 7 comas
 	while (comas != 7)
@@ -82,24 +80,32 @@ int16_t buscar_velocidad (char *pl)
 		else if (ch == ',') comas++;
 
 	// estoy en el septimo campo, leer la parte entera de la velocidad
+	pl++; pl++; // DEBUG: me salto el cero y el '.' para ir a leer la parte decimal
+	
 	while (true)
 		if ((ch = *pl++) >= '0' && ch <= '9') velocidad = velocidad * 10 + (ch - '0');
-		else if (ch == '.') return velocidad;
+//		else if (ch == '.') return velocidad;
+		else if (ch == ',') return velocidad; // leo la parte decimal, que si que va cambiando
 		else return -1;
 
 	cambia_led();
 	return -1;
 }
 
-
-
-
+// entrada: número de 0 a 15, no comprueba parámetros
+unsigned char itox(uint8_t i)
+{
+	if ((i += '0') > '9') i += 7; 
+	return i;
+}
 
 bool receptor_nmea(void)
 {
 	static uint8_t estado = 0; // estado global del receptor
 	static uint8_t checksum;
-	unsigned char ch;
+	static int rx_lon;
+
+	uint8_t ch;
 	bool recibido = false;
 
 	while (Serial.available() > 0)
@@ -116,10 +122,10 @@ bool receptor_nmea(void)
 		else
 			switch (estado)
 			{
-				case 0:	//esperando inicio de trama
+				case 0:	// esperando inicio de trama
 					break;
 
-				case 1:	// se ha recibido '$', recibiendo caracteres
+				case 1:	// recibiendo cuerpo, esperando fin de trama
 					if (ch == '*') // marca de fin de trama
 					{
 						linea[rx_lon] = '\0';
@@ -128,6 +134,7 @@ bool receptor_nmea(void)
 					else
 					{
 						checksum ^= ch; // todo lo que va entre '$' y '*' cuenta para el checksum
+
 						if (rx_lon < MAX_LINEA)
 							linea[rx_lon++] = ch;
 						else
@@ -135,13 +142,13 @@ bool receptor_nmea(void)
 					}
 					break;
 
-				case 2: //se recibió '*' -> éste es es el nibble alto del checksum
-					estado = 3;
+				case 2: // recibiendo nibble alto del checksum
+					estado = ch == itox(checksum >> 4) ? 3 : 0;
 					break;
 
-				case 3: //se recibió nibble_alto_del_checksum -> éste es el nibble bajo del checcksum
-					recibido = true; // marca trama recibida (como no va por interrupciones, no se perderá la trama)
-					estado = 0; // preparado para la siguiente
+				case 3: // recibiendo nibble bajo del checcksum
+					estado = 0;
+					recibido = ch == itox(checksum & 0x0F);
 					break;
 			}
 	}
@@ -156,6 +163,7 @@ void loop()
 
 	if (receptor_nmea())
 	{
-		if ((vel = buscar_velocidad(linea)) >= 0) Serial.println(vel);
+		Serial.println((char*)linea);
+		if ((vel = buscar_velocidad(linea)) >= 0) {Serial.print("[Km/h="); Serial.print(vel);Serial.print("]\n");}
 	}
 }
